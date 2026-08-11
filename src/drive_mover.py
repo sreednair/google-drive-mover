@@ -6,8 +6,10 @@ is verified so the operation behaves like a "move" rather than a copy.
 """
 
 import argparse
+import csv
 import io
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -198,7 +200,29 @@ def move_drive_folder(
     logger.info("Done. total=%d moved=%d failed=%d", total, moved, failed)
 
 
-def empty_trash(service, logger: logging.Logger):
+RECLAIM_LOG_HEADER = ["timestamp_utc", "trash_gb_before", "confirmed", "trash_gb_after", "gb_reclaimed"]
+
+
+def record_reclaim(log_dir: Path, trash_gb_before: float, confirmed: bool, trash_gb_after: float | None = None):
+    reclaim_log_path = log_dir / "reclaim_history.csv"
+    is_new = not reclaim_log_path.exists()
+    with reclaim_log_path.open("a", newline="") as f:
+        writer = csv.writer(f)
+        if is_new:
+            writer.writerow(RECLAIM_LOG_HEADER)
+        gb_reclaimed = trash_gb_before - trash_gb_after if trash_gb_after is not None else None
+        writer.writerow(
+            [
+                datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                f"{trash_gb_before:.2f}",
+                confirmed,
+                f"{trash_gb_after:.2f}" if trash_gb_after is not None else "",
+                f"{gb_reclaimed:.2f}" if gb_reclaimed is not None else "",
+            ]
+        )
+
+
+def empty_trash(service, log_dir: Path, logger: logging.Logger):
     quota_before = service.about().get(fields="storageQuota").execute()["storageQuota"]
     trash_gb = int(quota_before.get("usageInDriveTrash", 0)) / (1024**3)
 
@@ -207,10 +231,16 @@ def empty_trash(service, logger: logging.Logger):
     confirmation = input("> ")
     if confirmation != "EMPTY":
         logger.info("Empty-trash cancelled by user.")
+        record_reclaim(log_dir, trash_gb, confirmed=False)
         return
 
     service.files().emptyTrash().execute()
-    logger.info("Drive Trash emptied (%.2f GB reclaimed).", trash_gb)
+
+    quota_after = service.about().get(fields="storageQuota").execute()["storageQuota"]
+    trash_gb_after = int(quota_after.get("usageInDriveTrash", 0)) / (1024**3)
+
+    logger.info("Drive Trash emptied (%.2f GB reclaimed).", trash_gb - trash_gb_after)
+    record_reclaim(log_dir, trash_gb, confirmed=True, trash_gb_after=trash_gb_after)
 
 
 def build_logger(log_dir: Path) -> logging.Logger:
@@ -275,7 +305,7 @@ def main():
     service = build("drive", "v3", credentials=creds)
 
     if args.empty_trash:
-        empty_trash(service, logger)
+        empty_trash(service, log_dir, logger)
         return
 
     if not args.source or not args.dest:

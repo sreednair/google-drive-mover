@@ -1,6 +1,7 @@
 credentials/client_secret.json
 credentials/token.json
 logs/*.log
+logs/reclaim_history.csv
 __pycache__/
 *.pyc
 .venv/
