@@ -50,6 +50,102 @@ def test_disambiguate_filenames_same_name_different_folders_is_not_a_collision()
     assert filenames == ["same.txt", "same.txt"]
 
 
+# --- iter_drive_files (shortcut resolution) -----------------------------------
+
+
+def _list_response(files):
+    resp = MagicMock()
+    resp.execute.return_value = {"files": files}
+    return resp
+
+
+def test_iter_drive_files_follows_folder_shortcut():
+    service = MagicMock()
+
+    def list_side_effect(q, **kwargs):
+        if "'root'" in q:
+            return _list_response(
+                [
+                    {
+                        "id": "shortcut1",
+                        "name": "Linked Folder",
+                        "mimeType": drive_mover.SHORTCUT_MIME,
+                        "shortcutDetails": {"targetId": "realfolder1", "targetMimeType": drive_mover.FOLDER_MIME},
+                    }
+                ]
+            )
+        if "'realfolder1'" in q:
+            return _list_response([{"id": "f1", "name": "photo.jpg", "mimeType": "image/jpeg", "size": "100"}])
+        return _list_response([])
+
+    service.files.return_value.list.side_effect = list_side_effect
+
+    results = list(drive_mover.iter_drive_files(service, "root"))
+
+    assert len(results) == 1
+    file_meta, rel_path = results[0]
+    assert file_meta["name"] == "photo.jpg"
+    assert rel_path == Path("Linked Folder")
+
+
+def test_iter_drive_files_resolves_file_shortcut():
+    service = MagicMock()
+
+    def list_side_effect(q, **kwargs):
+        if "'root'" in q:
+            return _list_response(
+                [
+                    {
+                        "id": "shortcut2",
+                        "name": "Linked Doc",
+                        "mimeType": drive_mover.SHORTCUT_MIME,
+                        "shortcutDetails": {"targetId": "realfile1", "targetMimeType": "application/pdf"},
+                    }
+                ]
+            )
+        return _list_response([])
+
+    service.files.return_value.list.side_effect = list_side_effect
+    service.files.return_value.get.return_value.execute.return_value = {
+        "id": "realfile1",
+        "name": "actual.pdf",
+        "mimeType": "application/pdf",
+        "size": "500",
+    }
+
+    results = list(drive_mover.iter_drive_files(service, "root"))
+
+    assert len(results) == 1
+    file_meta, rel_path = results[0]
+    assert file_meta["name"] == "actual.pdf"
+    assert rel_path == Path()
+
+
+def test_iter_drive_files_skips_unresolvable_shortcut():
+    service = MagicMock()
+
+    def list_side_effect(q, **kwargs):
+        if "'root'" in q:
+            return _list_response(
+                [
+                    {
+                        "id": "shortcut3",
+                        "name": "Broken Link",
+                        "mimeType": drive_mover.SHORTCUT_MIME,
+                        "shortcutDetails": {"targetId": "gone", "targetMimeType": "application/pdf"},
+                    }
+                ]
+            )
+        return _list_response([])
+
+    service.files.return_value.list.side_effect = list_side_effect
+    service.files.return_value.get.return_value.execute.side_effect = make_http_error(403)
+
+    results = list(drive_mover.iter_drive_files(service, "root", logger=MagicMock()))
+
+    assert results == []
+
+
 # --- resolve_folder_id -------------------------------------------------------
 
 

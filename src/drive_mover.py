@@ -22,6 +22,7 @@ from googleapiclient.http import MediaIoBaseDownload
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 FOLDER_MIME = "application/vnd.google-apps.folder"
+SHORTCUT_MIME = "application/vnd.google-apps.shortcut"
 
 # Native Google Workspace formats can't be downloaded as-is; export them instead.
 GOOGLE_EXPORT_MIME_MAP = {
@@ -66,8 +67,14 @@ def get_credentials(credentials_dir: Path) -> Credentials:
     return creds
 
 
-def iter_drive_files(service, folder_id: str):
-    """Yield (file_metadata, relative_path) for every file under folder_id."""
+def iter_drive_files(service, folder_id: str, logger: logging.Logger | None = None):
+    """Yield (file_metadata, relative_path) for every file under folder_id.
+
+    Follows Drive shortcuts transparently: a shortcut to a folder is
+    recursed into (using the shortcut's own name, matching what's shown in
+    Drive), and a shortcut to a file yields that file's own metadata.
+    Shortcuts whose target can't be resolved (e.g. permission issues on a
+    cross-account share) are skipped with a warning rather than failing."""
     stack = [(folder_id, Path())]
     while stack:
         current_id, rel_path = stack.pop()
@@ -78,7 +85,7 @@ def iter_drive_files(service, folder_id: str):
                 .list(
                     q=f"'{current_id}' in parents and trashed = false",
                     spaces="drive",
-                    fields="nextPageToken, files(id, name, mimeType, size)",
+                    fields="nextPageToken, files(id, name, mimeType, size, shortcutDetails)",
                     pageToken=page_token,
                 )
                 .execute()
@@ -87,6 +94,26 @@ def iter_drive_files(service, folder_id: str):
             for f in response.get("files", []):
                 if f["mimeType"] == FOLDER_MIME:
                     stack.append((f["id"], rel_path / f["name"]))
+                elif f["mimeType"] == SHORTCUT_MIME:
+                    details = f.get("shortcutDetails") or {}
+                    target_id = details.get("targetId")
+                    target_mime = details.get("targetMimeType")
+                    if not target_id:
+                        continue
+                    if target_mime == FOLDER_MIME:
+                        stack.append((target_id, rel_path / f["name"]))
+                    else:
+                        try:
+                            target = (
+                                service.files()
+                                .get(fileId=target_id, fields="id, name, mimeType, size")
+                                .execute()
+                            )
+                        except HttpError as e:
+                            if logger:
+                                logger.warning("Skipping shortcut '%s' (couldn't resolve target): %s", f["name"], e)
+                            continue
+                        yield target, rel_path
                 else:
                     yield f, rel_path
 
@@ -257,7 +284,7 @@ def move_drive_folder(
     dry_run: bool,
     logger: logging.Logger,
 ):
-    entries = disambiguate_filenames(list(iter_drive_files(service, source_folder_id)))
+    entries = disambiguate_filenames(list(iter_drive_files(service, source_folder_id, logger)))
 
     total = moved = failed = 0
     for file_meta, rel_path, filename in entries:
