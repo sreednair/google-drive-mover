@@ -1,5 +1,5 @@
-credentials/client_secret.json
-credentials/token.json
+credentials/*
+!credentials/README.md
 logs/*.log
 logs/reclaim_history.csv
 __pycache__/

@@ -4,6 +4,43 @@ Moves files from Google Drive to a local path (e.g. an external drive),
 preserving folder structure. Can optionally trash the Drive copy after a
 verified download, turning it into a true "move".
 
+## Full walkthrough (checklist)
+
+Follow in order. Each step links to the section with the full details.
+
+1. [Install dependencies](#1-install-dependencies)
+2. [Get Google API credentials](#2-set-up-google-api-credentials) for the account you're moving files from, and save them as `credentials/client_secret.json`
+3. **Dry run everything first** — lists what would move, writes/deletes nothing, and triggers the browser sign-in:
+   ```bash
+   python src/drive_mover.py --source root --dest "<dest>" --dry-run
+   ```
+4. **Pick one small folder** from that output and test-copy just it (no deletion yet):
+   ```bash
+   python src/drive_mover.py --source "<TestFolder>" --dest "<dest>\<TestFolder>"
+   ```
+5. **Verify** the copied file(s) on disk match Drive before trusting it further (sizes, and ideally open one file to confirm it's not corrupted)
+6. **Copy everything**, still without deleting anything from Drive:
+   ```bash
+   python src/drive_mover.py --source root --dest "<dest>"
+   ```
+7. **Verify again** — every file's size on disk should match what Drive reports before you touch anything remotely
+8. **Trash the Drive originals** now that copies are verified (recoverable for 30 days):
+   ```bash
+   python src/drive_mover.py --source root --dest "<dest>" --delete-after
+   ```
+9. **Clean up the now-empty folders** left behind in Drive:
+   ```bash
+   python src/drive_mover.py --delete-empty-folders
+   ```
+10. **Permanently reclaim the space** — the one irreversible step, do it deliberately:
+    ```bash
+    python src/drive_mover.py --empty-trash
+    ```
+
+Some files can't be trashed if you don't own them (e.g. shared-with-you
+content) — that's expected, not a bug; they're simply left in place on
+Drive. See [Usage](#3-usage) below for full flag details.
+
 ## Folder structure
 
 ```
