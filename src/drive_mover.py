@@ -135,6 +135,74 @@ def trash_file(service, file_id: str, logger: logging.Logger):
     logger.info("Trashed Drive copy: %s", file_id)
 
 
+def list_subfolders(service, folder_id: str):
+    result = []
+    page_token = None
+    while True:
+        response = (
+            service.files()
+            .list(
+                q=f"'{folder_id}' in parents and trashed = false and mimeType = '{FOLDER_MIME}'",
+                spaces="drive",
+                fields="nextPageToken, files(id, name)",
+                pageToken=page_token,
+            )
+            .execute()
+        )
+        result.extend(response.get("files", []))
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+    return result
+
+
+def has_direct_files(service, folder_id: str) -> bool:
+    """Whether folder_id directly contains any non-folder item. Subfolders
+    are deliberately excluded here; those are judged separately/recursively
+    so the check works correctly even in dry-run mode, where nothing is
+    actually removed from Drive between recursive calls."""
+    response = (
+        service.files()
+        .list(
+            q=f"'{folder_id}' in parents and trashed = false and mimeType != '{FOLDER_MIME}'",
+            spaces="drive",
+            fields="files(id)",
+            pageSize=1,
+        )
+        .execute()
+    )
+    return len(response.get("files", [])) > 0
+
+
+def trash_empty_folders(service, root_folder_id: str, dry_run: bool, logger: logging.Logger):
+    """Recursively trash folders under root_folder_id that end up with no
+    remaining children (files or subfolders), bottom-up, so a folder that
+    only becomes empty after its subfolder is removed is still caught.
+    Folders that still contain anything (e.g. files that couldn't be
+    trashed due to permissions) are left alone."""
+
+    def walk(folder_id: str, rel_path: Path) -> bool:
+        """Returns True if folder_id is empty (and was trashed, unless dry_run)."""
+        all_subfolders_empty = True
+        for sub in list_subfolders(service, folder_id):
+            if not walk(sub["id"], rel_path / sub["name"]):
+                all_subfolders_empty = False
+
+        if not all_subfolders_empty or has_direct_files(service, folder_id):
+            logger.info("Leaving non-empty folder: %s", rel_path)
+            return False
+
+        if dry_run:
+            logger.info("[dry-run] Would trash empty folder: %s", rel_path)
+        else:
+            service.files().update(fileId=folder_id, body={"trashed": True}).execute()
+            logger.info("Trashed empty folder: %s", rel_path)
+        return True
+
+    for top in list_subfolders(service, root_folder_id):
+        walk(top["id"], Path(top["name"]))
+
+
 def resolve_folder_id(service, name_or_id: str) -> str:
     """Accept either a Drive folder ID or an exact folder name (looked up)."""
     try:
@@ -304,6 +372,13 @@ def parse_args():
         help="Trash the Drive copy after a successful download (true 'move'). Default: copy only.",
     )
     parser.add_argument(
+        "--delete-empty-folders",
+        action="store_true",
+        help="Trash folders under --source (default: root) that end up with no remaining files or "
+        "subfolders — e.g. after a --delete-after run. Folders that still contain anything "
+        "(such as shared files you don't have permission to trash) are left alone. Ignores --dest.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="List what would be moved without downloading or deleting anything.",
@@ -329,6 +404,11 @@ def main():
 
     if args.empty_trash:
         empty_trash(service, log_dir, logger)
+        return
+
+    if args.delete_empty_folders:
+        source_id = "root" if not args.source or args.source.lower() == "root" else resolve_folder_id(service, args.source)
+        trash_empty_folders(service, source_id, dry_run=args.dry_run, logger=logger)
         return
 
     if not args.source or not args.dest:
