@@ -23,6 +23,18 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+For running the test suite, install dev dependencies instead:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Tests cover the pure logic (duplicate-filename handling, folder resolution,
+empty-folder detection, export/skip behavior) against a mocked Drive API —
+they don't touch your real Google Drive or filesystem beyond pytest's tmp
+directories.
+
 ## 2. Set up Google API credentials
 
 1. Go to the [Google Cloud Console](https://console.cloud.google.com/).

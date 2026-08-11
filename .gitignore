@@ -5,3 +5,4 @@ logs/reclaim_history.csv
 __pycache__/
 *.pyc
 .venv/
+.pytest_cache/
