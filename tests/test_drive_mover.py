@@ -121,6 +121,33 @@ def test_iter_drive_files_resolves_file_shortcut():
     assert rel_path == Path()
 
 
+def test_iter_drive_files_skip_shortcuts_flag_ignores_them_entirely():
+    service = MagicMock()
+
+    def list_side_effect(q, **kwargs):
+        if "'root'" in q:
+            return _list_response(
+                [
+                    {
+                        "id": "shortcut1",
+                        "name": "Linked Folder",
+                        "mimeType": drive_mover.SHORTCUT_MIME,
+                        "shortcutDetails": {"targetId": "realfolder1", "targetMimeType": drive_mover.FOLDER_MIME},
+                    },
+                    {"id": "f0", "name": "regular.txt", "mimeType": "text/plain", "size": "10"},
+                ]
+            )
+        return _list_response([])
+
+    service.files.return_value.list.side_effect = list_side_effect
+
+    results = list(drive_mover.iter_drive_files(service, "root", skip_shortcuts=True))
+
+    assert len(results) == 1
+    assert results[0][0]["name"] == "regular.txt"
+    service.files.return_value.get.assert_not_called()
+
+
 def test_iter_drive_files_skips_unresolvable_shortcut():
     service = MagicMock()
 

@@ -67,14 +67,20 @@ def get_credentials(credentials_dir: Path) -> Credentials:
     return creds
 
 
-def iter_drive_files(service, folder_id: str, logger: logging.Logger | None = None):
+def iter_drive_files(
+    service,
+    folder_id: str,
+    logger: logging.Logger | None = None,
+    skip_shortcuts: bool = False,
+):
     """Yield (file_metadata, relative_path) for every file under folder_id.
 
-    Follows Drive shortcuts transparently: a shortcut to a folder is
-    recursed into (using the shortcut's own name, matching what's shown in
-    Drive), and a shortcut to a file yields that file's own metadata.
+    Follows Drive shortcuts transparently by default: a shortcut to a folder
+    is recursed into (using the shortcut's own name, matching what's shown
+    in Drive), and a shortcut to a file yields that file's own metadata.
     Shortcuts whose target can't be resolved (e.g. permission issues on a
-    cross-account share) are skipped with a warning rather than failing."""
+    cross-account share) are skipped with a warning rather than failing.
+    Pass skip_shortcuts=True to ignore all shortcuts instead."""
     stack = [(folder_id, Path())]
     while stack:
         current_id, rel_path = stack.pop()
@@ -95,6 +101,10 @@ def iter_drive_files(service, folder_id: str, logger: logging.Logger | None = No
                 if f["mimeType"] == FOLDER_MIME:
                     stack.append((f["id"], rel_path / f["name"]))
                 elif f["mimeType"] == SHORTCUT_MIME:
+                    if skip_shortcuts:
+                        if logger:
+                            logger.info("Skipping shortcut (--skip-shortcuts): %s", f["name"])
+                        continue
                     details = f.get("shortcutDetails") or {}
                     target_id = details.get("targetId")
                     target_mime = details.get("targetMimeType")
@@ -283,8 +293,11 @@ def move_drive_folder(
     delete_after: bool,
     dry_run: bool,
     logger: logging.Logger,
+    skip_shortcuts: bool = False,
 ):
-    entries = disambiguate_filenames(list(iter_drive_files(service, source_folder_id, logger)))
+    entries = disambiguate_filenames(
+        list(iter_drive_files(service, source_folder_id, logger, skip_shortcuts=skip_shortcuts))
+    )
 
     total = moved = failed = 0
     for file_meta, rel_path, filename in entries:
@@ -411,6 +424,12 @@ def parse_args():
         help="List what would be moved without downloading or deleting anything.",
     )
     parser.add_argument(
+        "--skip-shortcuts",
+        action="store_true",
+        help="Ignore Drive shortcuts instead of following them. By default, a shortcut to a folder "
+        "is recursed into and a shortcut to a file is downloaded like a normal file.",
+    )
+    parser.add_argument(
         "--credentials-dir",
         default=None,
         help="Directory containing client_secret.json / token.json (default: <project>/credentials)",
@@ -455,6 +474,7 @@ def main():
         delete_after=args.delete_after,
         dry_run=args.dry_run,
         logger=logger,
+        skip_shortcuts=args.skip_shortcuts,
     )
 
 

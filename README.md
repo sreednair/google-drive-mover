@@ -115,6 +115,14 @@ Google Docs/Sheets/Slides/Drawings are exported to `.docx`/`.xlsx`/`.pptx`/`.png
 since they have no native downloadable format. Trashed files can be restored
 from Drive's Trash for 30 days before permanent deletion.
 
+Drive shortcuts (including shared-with-you folders linked into your own Drive
+— a common pattern) are followed by default: a shortcut to a folder is
+recursed into using the shortcut's own name, and a shortcut to a file is
+downloaded like a normal file. Pass `--skip-shortcuts` to ignore them
+instead. Either way, files you don't own (shared content) can be copied but
+can't be trashed by `--delete-after` — that fails with a permissions error
+and is left in place on Drive, which is expected, not a bug.
+
 Note: files sent to Trash still count against your Drive storage quota until
 the trash is actually emptied — `--delete-after` alone won't free up space.
 
