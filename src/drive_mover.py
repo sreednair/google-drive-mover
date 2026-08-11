@@ -160,6 +160,27 @@ def resolve_folder_id(service, name_or_id: str) -> str:
     return matches[0]["id"]
 
 
+def disambiguate_filenames(entries):
+    """Google Drive allows multiple files with the identical name in the same
+    folder. Detect any (rel_path, name) collisions up front and give every
+    file in a colliding group a unique, stable filename (Drive file ID
+    suffix) so none of them silently overwrite each other on disk."""
+    groups: dict[tuple[Path, str], list] = {}
+    for file_meta, rel_path in entries:
+        groups.setdefault((rel_path, file_meta["name"]), []).append(file_meta)
+
+    result = []
+    for file_meta, rel_path in entries:
+        key = (rel_path, file_meta["name"])
+        if len(groups[key]) > 1:
+            name = Path(file_meta["name"])
+            filename = f"{name.stem} [{file_meta['id'][:8]}]{name.suffix}"
+        else:
+            filename = file_meta["name"]
+        result.append((file_meta, rel_path, filename))
+    return result
+
+
 def move_drive_folder(
     service,
     source_folder_id: str,
@@ -168,10 +189,12 @@ def move_drive_folder(
     dry_run: bool,
     logger: logging.Logger,
 ):
+    entries = disambiguate_filenames(list(iter_drive_files(service, source_folder_id)))
+
     total = moved = failed = 0
-    for file_meta, rel_path in iter_drive_files(service, source_folder_id):
+    for file_meta, rel_path, filename in entries:
         total += 1
-        dest_path = destination_root / rel_path / file_meta["name"]
+        dest_path = destination_root / rel_path / filename
 
         if dry_run:
             logger.info("[dry-run] Would move: %s -> %s", file_meta["name"], dest_path)
