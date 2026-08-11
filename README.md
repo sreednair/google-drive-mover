@@ -69,6 +69,18 @@ from Drive's Trash for 30 days before permanent deletion.
 Note: files sent to Trash still count against your Drive storage quota until
 the trash is actually emptied — `--delete-after` alone won't free up space.
 
+After a `--delete-after` run, the now-empty source folders themselves are
+still left behind in Drive. Clean those up separately:
+
+```bash
+python src/drive_mover.py --delete-empty-folders --source "My Photos"
+```
+
+This recursively trashes folders that end up with no remaining files or
+subfolders. Folders that still contain anything (e.g. files that couldn't be
+trashed because you don't own them — shared-with-you content) are left
+alone. Omit `--source` to sweep your entire My Drive. Supports `--dry-run`.
+
 Logs are written to `logs/drive_mover.log` and echoed to the console.
 
 ## 4. Reclaiming space (optional)
