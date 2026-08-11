@@ -83,3 +83,9 @@ python src/drive_mover.py --empty-trash
 
 This asks for interactive confirmation (type `EMPTY`) before doing anything,
 since it's irreversible.
+
+Note: Google's storage-quota numbers lag behind the actual deletion by a few
+minutes. The "GB reclaimed" the script reports right after emptying trash may
+show `0.00` even though the delete succeeded — re-run with `--empty-trash`
+(it'll just report an already-empty trash) or check usage again a few minutes
+later to see the real number.
