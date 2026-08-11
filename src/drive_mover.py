@@ -198,6 +198,21 @@ def move_drive_folder(
     logger.info("Done. total=%d moved=%d failed=%d", total, moved, failed)
 
 
+def empty_trash(service, logger: logging.Logger):
+    quota_before = service.about().get(fields="storageQuota").execute()["storageQuota"]
+    trash_gb = int(quota_before.get("usageInDriveTrash", 0)) / (1024**3)
+
+    print(f"This will PERMANENTLY delete all {trash_gb:.2f} GB currently in Drive Trash.")
+    print("This cannot be undone. Type EMPTY to confirm:")
+    confirmation = input("> ")
+    if confirmation != "EMPTY":
+        logger.info("Empty-trash cancelled by user.")
+        return
+
+    service.files().emptyTrash().execute()
+    logger.info("Drive Trash emptied (%.2f GB reclaimed).", trash_gb)
+
+
 def build_logger(log_dir: Path) -> logging.Logger:
     log_dir.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("drive_mover")
@@ -221,10 +236,15 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Move Google Drive files to an external drive.")
     parser.add_argument(
         "--source",
-        required=True,
         help="Drive folder ID or exact folder name to move from ('root' for My Drive root)",
     )
-    parser.add_argument("--dest", required=True, help="Destination path on the external drive")
+    parser.add_argument("--dest", help="Destination path on the external drive")
+    parser.add_argument(
+        "--empty-trash",
+        action="store_true",
+        help="Permanently empty Google Drive Trash (asks for interactive confirmation) and exit. "
+        "Ignores --source/--dest.",
+    )
     parser.add_argument(
         "--delete-after",
         action="store_true",
@@ -250,13 +270,21 @@ def main():
     log_dir = project_root / "logs"
 
     logger = build_logger(log_dir)
+
+    creds = get_credentials(credentials_dir)
+    service = build("drive", "v3", credentials=creds)
+
+    if args.empty_trash:
+        empty_trash(service, logger)
+        return
+
+    if not args.source or not args.dest:
+        raise SystemExit("--source and --dest are required unless --empty-trash is given.")
+
     destination_root = Path(args.dest)
 
     if not args.dry_run:
         destination_root.mkdir(parents=True, exist_ok=True)
-
-    creds = get_credentials(credentials_dir)
-    service = build("drive", "v3", credentials=creds)
 
     source_id = "root" if args.source.lower() == "root" else resolve_folder_id(service, args.source)
 

@@ -66,4 +66,20 @@ Google Docs/Sheets/Slides/Drawings are exported to `.docx`/`.xlsx`/`.pptx`/`.png
 since they have no native downloadable format. Trashed files can be restored
 from Drive's Trash for 30 days before permanent deletion.
 
+Note: files sent to Trash still count against your Drive storage quota until
+the trash is actually emptied — `--delete-after` alone won't free up space.
+
 Logs are written to `logs/drive_mover.log` and echoed to the console.
+
+## 4. Reclaiming space (optional)
+
+Trashed files don't free up Drive storage until Trash is emptied. Once you're
+confident your external-drive copies are good, you can permanently empty Drive
+Trash:
+
+```bash
+python src/drive_mover.py --empty-trash
+```
+
+This asks for interactive confirmation (type `EMPTY`) before doing anything,
+since it's irreversible.
