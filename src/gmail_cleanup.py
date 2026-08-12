@@ -150,6 +150,28 @@ def download_attachment(service, message_id: str, attachment: dict, dest_path: P
     return True
 
 
+def download_raw_message(service, message_id: str, dest_path: Path, logger: logging.Logger) -> bool:
+    """Save the full original email (headers + body + inline attachments) as
+    a standard .eml file, readable in any mail client or browser. This is
+    separate from the individual attachment downloads: without it, deleting
+    the message loses the body/subject/headers permanently once Gmail's own
+    Trash expires, with nothing preserved on disk."""
+    if dest_path.exists():
+        logger.info("Already present, skipping: %s", dest_path)
+        return True
+
+    result = service.users().messages().get(userId="me", id=message_id, format="raw").execute()
+    encoded = result["raw"]
+    encoded += "=" * (-len(encoded) % 4)
+    data = base64.urlsafe_b64decode(encoded)
+
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    dest_path.write_bytes(data)
+
+    logger.info("Saved full email: %s", dest_path)
+    return True
+
+
 def trash_message(service, message_id: str, logger: logging.Logger):
     service.users().messages().trash(userId="me", id=message_id).execute()
     logger.info("Trashed message: %s", message_id)
@@ -212,6 +234,15 @@ def clean_up_attachments(
         message_dir = destination_root / folder_name
 
         all_ok = True
+
+        try:
+            ok = download_raw_message(service, message_id, message_dir / "message.eml", logger)
+        except HttpError as e:
+            logger.error("Failed to save full email for message %s: %s", message_id, e)
+            ok = False
+        if not ok:
+            all_ok = False
+
         for attachment in attachments:
             dest_path = message_dir / sanitize_filename(attachment["filename"], 100)
             try:

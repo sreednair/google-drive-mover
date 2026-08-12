@@ -221,8 +221,10 @@ python src/gmail_cleanup.py --dest "E:\GmailBackup" --delete-after
 ```
 
 Each email's attachment(s) are saved into their own subfolder (named by
-date, sender, and subject) under `--dest`, so multiple attachments from one
-email stay grouped together. Trashed emails are recoverable from Gmail
-Trash for 30 days.
+date, sender, and subject) under `--dest`, alongside a `message.eml` with
+the full original email (headers + body) — so trashing the message with
+`--delete-after` doesn't lose the body text, just the Gmail Trash copy.
+`.eml` files open in any mail client or most browsers. Trashed emails are
+recoverable from Gmail Trash for 30 days.
 
 Logs are written to `logs/gmail_cleanup.log`.

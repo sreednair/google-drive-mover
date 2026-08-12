@@ -93,6 +93,34 @@ def test_iter_attachment_parts_ignores_filename_without_attachment_id():
     assert list(gmail_cleanup.iter_attachment_parts(payload)) == []
 
 
+# --- download_raw_message -----------------------------------------------------------
+
+
+def test_download_raw_message_decodes_and_writes_eml(tmp_path):
+    dest = tmp_path / "msg1" / "message.eml"
+    content = b"From: a@b.com\r\nSubject: Hi\r\n\r\nBody text"
+    encoded = base64.urlsafe_b64encode(content).decode("ascii").rstrip("=")
+
+    service = MagicMock()
+    service.users.return_value.messages.return_value.get.return_value.execute.return_value = {"raw": encoded}
+
+    ok = gmail_cleanup.download_raw_message(service, "msg1", dest, MagicMock())
+
+    assert ok is True
+    assert dest.read_bytes() == content
+
+
+def test_download_raw_message_skips_when_already_present(tmp_path):
+    dest = tmp_path / "message.eml"
+    dest.write_bytes(b"already here")
+    service = MagicMock()
+
+    ok = gmail_cleanup.download_raw_message(service, "msg1", dest, MagicMock())
+
+    assert ok is True
+    service.users.return_value.messages.return_value.get.assert_not_called()
+
+
 # --- download_attachment ---------------------------------------------------------
 
 
