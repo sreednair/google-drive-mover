@@ -1,8 +1,15 @@
 # google-drive-mover
 
-Moves files from Google Drive to a local path (e.g. an external drive),
-preserving folder structure. Can optionally trash the Drive copy after a
-verified download, turning it into a true "move".
+A "Google space cleaner" toolkit: moves content out of a Google account to a
+local path (e.g. an external drive), verifies it landed safely, then
+optionally clears the Google-side copy to reclaim storage.
+
+- **`src/drive_mover.py`** — Google Drive files, preserving folder structure
+- **`src/gmail_cleanup.py`** — large email attachments
+- Google Photos isn't API-scriptable anymore (Google restricted bulk access
+  in 2025) — use [Google Takeout](https://takeout.google.com) to export it
+  manually, then organize the result onto your drive by hand or with a
+  one-off script
 
 ## Full walkthrough (checklist)
 
@@ -46,9 +53,11 @@ Drive. See [Usage](#3-usage) below for full flag details.
 ```
 google-drive-mover/
   src/
-    drive_mover.py      # main script
-  credentials/           # OAuth client secret + saved token (gitignored)
-  logs/                   # run logs (gitignored)
+    drive_mover.py        # Drive -> local drive
+    gmail_cleanup.py       # large Gmail attachments -> local drive
+  credentials/              # Drive OAuth client secret + token (gitignored)
+  credentials-gmail/         # Gmail OAuth client secret + token (gitignored)
+  logs/                       # run logs (gitignored)
   requirements.txt
 ```
 
@@ -158,3 +167,62 @@ minutes. The "GB reclaimed" the script reports right after emptying trash may
 show `0.00` even though the delete succeeded — re-run with `--empty-trash`
 (it'll just report an already-empty trash) or check usage again a few minutes
 later to see the real number.
+
+## 5. Gmail cleanup (large attachments)
+
+`gmail_cleanup.py` finds emails with large attachments, downloads the
+attachments to a local path, and can trash the whole email once verified.
+Gmail has no API to delete just an attachment — the unit of deletion is the
+entire message (subject, body, thread), not a surgical attachment-only
+removal, so treat `--delete-after` accordingly.
+
+### Credentials
+
+Same idea as Drive, but a separate project/scope:
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), reuse the
+   same project as your Drive setup (or create a new one) and enable the
+   **Gmail API** (`APIs & Services > Library`).
+2. On the **OAuth consent screen**, make sure the account you'll clean up is
+   added as a test user (same screen used for Drive works fine).
+3. Create a new **OAuth client ID** (`Desktop app`) — Gmail needs its own
+   client since the scope differs from Drive's.
+4. Download the JSON and save it as `credentials-gmail/client_secret.json`
+   (a separate folder from Drive's credentials, to avoid mixing them up).
+
+First run opens a browser to sign in and creates `credentials-gmail/token.json`.
+
+### Usage
+
+Always dry-run first — review the exact list of candidate emails (sender,
+subject, date, size) before downloading or deleting anything:
+
+```bash
+python src/gmail_cleanup.py --dry-run
+```
+
+Narrow or exclude with normal Gmail search syntax via `--query` (default is
+`has:attachment larger:5M`):
+
+```bash
+python src/gmail_cleanup.py --dry-run --query "has:attachment larger:10M -from:family@example.com -label:personal"
+```
+
+Download attachments, leaving Gmail untouched:
+
+```bash
+python src/gmail_cleanup.py --dest "E:\GmailBackup"
+```
+
+Download and trash the whole email once its attachment(s) are verified on disk:
+
+```bash
+python src/gmail_cleanup.py --dest "E:\GmailBackup" --delete-after
+```
+
+Each email's attachment(s) are saved into their own subfolder (named by
+date, sender, and subject) under `--dest`, so multiple attachments from one
+email stay grouped together. Trashed emails are recoverable from Gmail
+Trash for 30 days.
+
+Logs are written to `logs/gmail_cleanup.log`.

@@ -1,5 +1,7 @@
 credentials/*
 !credentials/README.md
+credentials-gmail/*
+!credentials-gmail/README.md
 logs/*.log
 logs/reclaim_history.csv
 __pycache__/
