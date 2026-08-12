@@ -9,6 +9,7 @@ import argparse
 import csv
 import io
 import logging
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -382,10 +383,16 @@ def build_logger(log_dir: Path) -> logging.Logger:
 
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 
-    file_handler = logging.FileHandler(log_dir / "drive_mover.log")
+    file_handler = logging.FileHandler(log_dir / "drive_mover.log", encoding="utf-8")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
+    # File/folder names can contain characters the Windows console's default
+    # codepage can't encode. Replace rather than crash the logging call.
+    try:
+        sys.stdout.reconfigure(errors="backslashreplace")
+    except (AttributeError, ValueError):
+        pass
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
