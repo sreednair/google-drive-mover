@@ -185,10 +185,6 @@ def clean_up_attachments(
 
     for message_id, sender, subject, date_str, attachments in iter_large_attachment_messages(service, query):
         total_messages += 1
-        folder_name = (
-            f"{date_str} - {sanitize_filename(sender, 30)} - {sanitize_filename(subject, 40)} [{message_id[:8]}]"
-        )
-        message_dir = destination_root / folder_name
 
         if dry_run:
             total_size = sum(a.get("size", 0) for a in attachments)
@@ -201,6 +197,11 @@ def clean_up_attachments(
                 total_size / (1024**2),
             )
             continue
+
+        folder_name = (
+            f"{date_str} - {sanitize_filename(sender, 30)} - {sanitize_filename(subject, 40)} [{message_id[:8]}]"
+        )
+        message_dir = destination_root / folder_name
 
         all_ok = True
         for attachment in attachments:

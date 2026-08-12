@@ -5,6 +5,28 @@ from unittest.mock import MagicMock
 import gmail_cleanup
 
 
+# --- clean_up_attachments -------------------------------------------------------
+
+
+def test_clean_up_attachments_dry_run_works_without_a_destination(monkeypatch):
+    # Regression test: --dry-run doesn't require --dest, so destination_root
+    # can be None. clean_up_attachments must not touch it in that path.
+    sample = [
+        (
+            "msg1",
+            "someone@example.com",
+            "Big file",
+            "2026-01-01",
+            [{"filename": "report.pdf", "attachmentId": "att1", "size": 6_000_000}],
+        )
+    ]
+    monkeypatch.setattr(gmail_cleanup, "iter_large_attachment_messages", lambda service, query: iter(sample))
+
+    gmail_cleanup.clean_up_attachments(
+        MagicMock(), query="has:attachment", destination_root=None, delete_after=False, dry_run=True, logger=MagicMock()
+    )
+
+
 # --- sanitize_filename -------------------------------------------------------
 
 
