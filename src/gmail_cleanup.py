@@ -9,6 +9,7 @@ of deletion is the whole message. --delete-after trashes the entire email
 
 import argparse
 import base64
+import csv
 import logging
 import re
 import sys
@@ -197,6 +198,56 @@ def list_all_message_ids(service, query: str):
     return ids
 
 
+AUTOMATED_SENDER_PATTERN = re.compile(
+    r"no-?reply|do-?not-?reply|notifications?@|alerts?@|mailer-daemon|automated|newsletter", re.IGNORECASE
+)
+
+CLASSIFY_HEADERS = ["From", "Subject", "Date", "List-Unsubscribe", "In-Reply-To", "References"]
+
+
+def classify_message(headers) -> str:
+    """Classify a message as 'bulk-or-automated', 'conversation', or
+    'uncertain' using signals that don't depend on any particular mailbox's
+    content: the List-Unsubscribe header (present on nearly all bulk mail,
+    essentially never on person-to-person email), whether the message is a
+    reply (In-Reply-To/References -- real conversations go back and forth),
+    and common automated-sender address patterns (no-reply@, alerts@, etc.)."""
+    sender = get_header(headers, "From")
+    has_list_unsubscribe = bool(get_header(headers, "List-Unsubscribe"))
+    is_reply = bool(get_header(headers, "In-Reply-To") or get_header(headers, "References"))
+    looks_automated = bool(AUTOMATED_SENDER_PATTERN.search(sender))
+
+    if has_list_unsubscribe or looks_automated:
+        return "bulk-or-automated"
+    if is_reply:
+        return "conversation"
+    return "uncertain"
+
+
+def iter_classified_messages(service, query: str):
+    """Yield (message_id, sender, subject, date_str, category) for every
+    message matching query, using classify_message. One lightweight
+    metadata-only API call per message (no body/attachments fetched)."""
+    for message_id in list_all_message_ids(service, query):
+        message = (
+            service.users()
+            .messages()
+            .get(userId="me", id=message_id, format="metadata", metadataHeaders=CLASSIFY_HEADERS)
+            .execute()
+        )
+        headers = message["payload"].get("headers", [])
+        sender = get_header(headers, "From")
+        subject = get_header(headers, "Subject") or "(no subject)"
+        internal_ms = int(message.get("internalDate", "0"))
+        date_str = (
+            datetime.fromtimestamp(internal_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+            if internal_ms
+            else "unknown-date"
+        )
+        category = classify_message(headers)
+        yield message_id, sender, subject, date_str, category
+
+
 def batch_trash(service, message_ids, logger: logging.Logger, batch_size: int = 1000):
     """Trash many messages efficiently via batchModify (up to 1000 IDs per
     call) instead of one API call per message. No per-message backup is
@@ -352,6 +403,19 @@ def parse_args():
         "'category:promotions OR category:social'.",
     )
     parser.add_argument(
+        "--classify",
+        action="store_true",
+        help="Classify every message matching --query as 'bulk-or-automated', 'conversation', or "
+        "'uncertain' (via the List-Unsubscribe header, reply headers, and common automated-sender "
+        "patterns) and write a CSV report. Read-only -- downloads or deletes nothing. Ignores --dest, "
+        "--delete-after, --bulk-trash.",
+    )
+    parser.add_argument(
+        "--report-path",
+        default=None,
+        help="Where to write the --classify CSV report (default: <project>/gmail_classification.csv)",
+    )
+    parser.add_argument(
         "--credentials-dir",
         default=None,
         help="Directory containing client_secret.json / token.json (default: <project>/credentials-gmail)",
@@ -369,6 +433,24 @@ def main():
 
     creds = get_credentials(credentials_dir)
     service = build("gmail", "v1", credentials=creds)
+
+    if args.classify:
+        report_path = Path(args.report_path) if args.report_path else project_root / "gmail_classification.csv"
+        counts = {"bulk-or-automated": 0, "conversation": 0, "uncertain": 0}
+        with report_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["category", "date", "sender", "subject", "message_id"])
+            for message_id, sender, subject, date_str, category in iter_classified_messages(service, args.query):
+                writer.writerow([category, date_str, sender, subject, message_id])
+                counts[category] += 1
+        logger.info(
+            "Done. bulk-or-automated=%d conversation=%d uncertain=%d -> %s",
+            counts["bulk-or-automated"],
+            counts["conversation"],
+            counts["uncertain"],
+            report_path,
+        )
+        return
 
     if args.bulk_trash:
         ids = list_all_message_ids(service, args.query)

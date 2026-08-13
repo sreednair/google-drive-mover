@@ -7,6 +7,58 @@ from googleapiclient.errors import HttpError
 import gmail_cleanup
 
 
+# --- classify_message / iter_classified_messages ---------------------------------
+
+
+def test_classify_message_with_list_unsubscribe_is_bulk():
+    headers = [{"name": "From", "value": "friend@example.com"}, {"name": "List-Unsubscribe", "value": "<...>"}]
+    assert gmail_cleanup.classify_message(headers) == "bulk-or-automated"
+
+
+def test_classify_message_automated_sender_pattern_is_bulk():
+    headers = [{"name": "From", "value": "no-reply@somesite.com"}]
+    assert gmail_cleanup.classify_message(headers) == "bulk-or-automated"
+
+
+def test_classify_message_reply_headers_is_conversation():
+    headers = [{"name": "From", "value": "friend@example.com"}, {"name": "In-Reply-To", "value": "<msg123>"}]
+    assert gmail_cleanup.classify_message(headers) == "conversation"
+
+
+def test_classify_message_references_header_is_conversation():
+    headers = [{"name": "From", "value": "friend@example.com"}, {"name": "References", "value": "<msg123>"}]
+    assert gmail_cleanup.classify_message(headers) == "conversation"
+
+
+def test_classify_message_plain_first_contact_is_uncertain():
+    headers = [{"name": "From", "value": "friend@example.com"}]
+    assert gmail_cleanup.classify_message(headers) == "uncertain"
+
+
+def test_iter_classified_messages_yields_expected_tuple(monkeypatch):
+    service = MagicMock()
+    monkeypatch.setattr(gmail_cleanup, "list_all_message_ids", lambda service, query: ["m1"])
+    service.users.return_value.messages.return_value.get.return_value.execute.return_value = {
+        "internalDate": "1700000000000",
+        "payload": {
+            "headers": [
+                {"name": "From", "value": "friend@example.com"},
+                {"name": "Subject", "value": "Hi"},
+                {"name": "In-Reply-To", "value": "<x>"},
+            ]
+        },
+    }
+
+    results = list(gmail_cleanup.iter_classified_messages(service, "some query"))
+
+    assert len(results) == 1
+    message_id, sender, subject, date_str, category = results[0]
+    assert message_id == "m1"
+    assert sender == "friend@example.com"
+    assert subject == "Hi"
+    assert category == "conversation"
+
+
 # --- list_all_message_ids / batch_trash ------------------------------------------
 
 

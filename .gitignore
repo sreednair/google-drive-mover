@@ -4,6 +4,7 @@ credentials-gmail/*
 !credentials-gmail/README.md
 logs/*.log
 logs/reclaim_history.csv
+gmail_classification.csv
 __pycache__/
 *.pyc
 .venv/
