@@ -2,7 +2,74 @@ import base64
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from googleapiclient.errors import HttpError
+
 import gmail_cleanup
+
+
+# --- list_all_message_ids / batch_trash ------------------------------------------
+
+
+class FakeResp:
+    def __init__(self, status):
+        self.status = status
+        self.reason = "error"
+
+
+def test_list_all_message_ids_paginates():
+    service = MagicMock()
+    service.users.return_value.messages.return_value.list.return_value.execute.side_effect = [
+        {"messages": [{"id": "a"}, {"id": "b"}], "nextPageToken": "p2"},
+        {"messages": [{"id": "c"}]},
+    ]
+
+    ids = gmail_cleanup.list_all_message_ids(service, "some query")
+
+    assert ids == ["a", "b", "c"]
+
+
+def test_batch_trash_chunks_by_batch_size():
+    service = MagicMock()
+    ids = [str(i) for i in range(2500)]
+
+    total = gmail_cleanup.batch_trash(service, ids, MagicMock(), batch_size=1000)
+
+    assert total == 2500
+    calls = service.users.return_value.messages.return_value.batchModify.call_args_list
+    assert len(calls) == 3
+    assert len(calls[0].kwargs["body"]["ids"]) == 1000
+    assert len(calls[1].kwargs["body"]["ids"]) == 1000
+    assert len(calls[2].kwargs["body"]["ids"]) == 500
+    assert all(c.kwargs["body"]["addLabelIds"] == ["TRASH"] for c in calls)
+
+
+def test_batch_trash_retries_then_succeeds(monkeypatch):
+    monkeypatch.setattr(gmail_cleanup.time, "sleep", lambda s: None)
+    service = MagicMock()
+    error = HttpError(FakeResp(429), b"{}")
+    service.users.return_value.messages.return_value.batchModify.return_value.execute.side_effect = [
+        error,
+        error,
+        None,
+    ]
+
+    total = gmail_cleanup.batch_trash(service, ["a", "b"], MagicMock(), batch_size=1000)
+
+    assert total == 2
+    assert service.users.return_value.messages.return_value.batchModify.return_value.execute.call_count == 3
+
+
+def test_batch_trash_gives_up_after_max_retries(monkeypatch):
+    monkeypatch.setattr(gmail_cleanup.time, "sleep", lambda s: None)
+    service = MagicMock()
+    error = HttpError(FakeResp(429), b"{}")
+    service.users.return_value.messages.return_value.batchModify.return_value.execute.side_effect = error
+
+    try:
+        gmail_cleanup.batch_trash(service, ["a"], MagicMock(), batch_size=1000)
+        assert False, "expected HttpError to propagate"
+    except HttpError:
+        pass
 
 
 # --- clean_up_attachments -------------------------------------------------------

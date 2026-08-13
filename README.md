@@ -228,3 +228,26 @@ the full original email (headers + body) — so trashing the message with
 recoverable from Gmail Trash for 30 days.
 
 Logs are written to `logs/gmail_cleanup.log`.
+
+### Bulk cleanup (no backup, for mail you don't need to keep)
+
+For mail that's clearly disposable — Gmail's own Promotions/Social/Updates
+categorization, for example — downloading and backing up each message first
+isn't worth it, and doing so one API call at a time doesn't scale past a
+few thousand messages anyway. `--bulk-trash` uses Gmail's batch API (up to
+1,000 messages per call) to trash by query directly, with no per-message
+download:
+
+```bash
+# Check the count first
+python src/gmail_cleanup.py --bulk-trash --dry-run --query "category:promotions OR category:social"
+
+# Then actually trash them
+python src/gmail_cleanup.py --bulk-trash --query "category:promotions OR category:social"
+```
+
+`category:updates` tends to be a mixed bag (receipts, security alerts,
+shipping notifications) — worth reviewing rather than bulk-trashing
+outright. `-to:me` (messages where you're not a direct "To" recipient) is
+*not* a reliable "junk" signal on its own, since plenty of newsletter/promo
+signups are addressed directly to you too.

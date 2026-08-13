@@ -12,6 +12,7 @@ import base64
 import logging
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -177,6 +178,54 @@ def trash_message(service, message_id: str, logger: logging.Logger):
     logger.info("Trashed message: %s", message_id)
 
 
+def list_all_message_ids(service, query: str):
+    """List every message ID matching query. IDs only (no body/attachment
+    fetches), so this is cheap even across a very large mailbox."""
+    ids = []
+    page_token = None
+    while True:
+        resp = (
+            service.users()
+            .messages()
+            .list(userId="me", q=query, pageToken=page_token, maxResults=500)
+            .execute()
+        )
+        ids.extend(m["id"] for m in resp.get("messages", []))
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+    return ids
+
+
+def batch_trash(service, message_ids, logger: logging.Logger, batch_size: int = 1000):
+    """Trash many messages efficiently via batchModify (up to 1000 IDs per
+    call) instead of one API call per message. No per-message backup is
+    made here -- this is for bulk cleanup of mail you don't need a local
+    copy of (see gmail_cleanup.py's per-message download+trash path for
+    that instead)."""
+    trashed = 0
+    for i in range(0, len(message_ids), batch_size):
+        chunk = message_ids[i : i + batch_size]
+        attempt = 0
+        while True:
+            try:
+                service.users().messages().batchModify(
+                    userId="me", body={"ids": chunk, "addLabelIds": ["TRASH"]}
+                ).execute()
+                break
+            except HttpError as e:
+                attempt += 1
+                if attempt > 5:
+                    logger.error("Giving up on batch %d-%d after 5 retries: %s", i, i + len(chunk), e)
+                    raise
+                wait = min(2**attempt, 60)
+                logger.warning("Batch %d-%d failed (%s), retrying in %ds", i, i + len(chunk), e, wait)
+                time.sleep(wait)
+        trashed += len(chunk)
+        logger.info("Trashed %d/%d", trashed, len(message_ids))
+    return trashed
+
+
 def build_logger(log_dir: Path) -> logging.Logger:
     log_dir.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("gmail_cleanup")
@@ -291,7 +340,16 @@ def parse_args():
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="List matching emails (sender, subject, date, attachment size) without downloading or deleting.",
+        help="List matching emails (sender, subject, date, attachment size) without downloading or deleting. "
+        "With --bulk-trash, just prints the matching count instead.",
+    )
+    parser.add_argument(
+        "--bulk-trash",
+        action="store_true",
+        help="Bulk-trash every message matching --query with no per-message download or backup, using "
+        "Gmail's batch API (fast even across tens of thousands of messages). Ignores --dest and "
+        "--delete-after. For mail you don't need a local copy of -- e.g. --query "
+        "'category:promotions OR category:social'.",
     )
     parser.add_argument(
         "--credentials-dir",
@@ -309,15 +367,23 @@ def main():
 
     logger = build_logger(log_dir)
 
+    creds = get_credentials(credentials_dir)
+    service = build("gmail", "v1", credentials=creds)
+
+    if args.bulk_trash:
+        ids = list_all_message_ids(service, args.query)
+        logger.info("Found %d messages matching query.", len(ids))
+        if args.dry_run:
+            return
+        batch_trash(service, ids, logger)
+        return
+
     if not args.dest and not args.dry_run:
         raise SystemExit("--dest is required unless --dry-run is given.")
 
     destination_root = Path(args.dest) if args.dest else None
     if destination_root and not args.dry_run:
         destination_root.mkdir(parents=True, exist_ok=True)
-
-    creds = get_credentials(credentials_dir)
-    service = build("gmail", "v1", credentials=creds)
 
     clean_up_attachments(
         service,
